@@ -4,8 +4,9 @@ import yaml
 from dotenv import load_dotenv
 import time
 import uuid
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi import Query
 from starlette.middleware.base import BaseHTTPMiddleware
 import jwt
 from fastapi.responses import JSONResponse
@@ -150,7 +151,7 @@ async def verify(request: TokenRequest):
     from fastapi import Request
 
 @app.get("/effective-config")
-async def effective_config(request: Request):
+async def effective_config(set: list[str] = Query(default=[])):
 
     config = DEFAULTS.copy()
 
@@ -189,7 +190,7 @@ async def effective_config(request: Request):
     # CLI Overrides
     # -----------------------
 
-    overrides = request.query_params.getlist("set")
+    overrides = set
 
     for item in overrides:
 
