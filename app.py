@@ -1,3 +1,7 @@
+import os
+import yaml
+
+from dotenv import load_dotenv
 import time
 import uuid
 from fastapi import FastAPI, Query
@@ -6,9 +10,10 @@ from starlette.middleware.base import BaseHTTPMiddleware
 import jwt
 from fastapi.responses import JSONResponse
 
-from fastapi import HTTPException
 from pydantic import BaseModel
 app = FastAPI()
+
+load_dotenv()
 
 PUBLIC_KEY = """
 -----BEGIN PUBLIC KEY-----
@@ -64,6 +69,29 @@ class MetricsMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(MetricsMiddleware)
 
+DEFAULTS = {
+    "port": 8000,
+    "workers": 1,
+    "debug": False,
+    "log_level": "info",
+    "api_key": "default-secret-000",
+}
+
+
+def to_bool(value):
+    if isinstance(value, bool):
+        return value
+    return str(value).lower() in ("true", "1", "yes", "on")
+
+
+def convert(key, value):
+    if key in ("port", "workers"):
+        return int(value)
+
+    if key == "debug":
+        return to_bool(value)
+
+    return str(value)
 # ------------------------------------
 # Endpoint
 # ------------------------------------
@@ -113,10 +141,66 @@ async def verify(request: TokenRequest):
             "aud": payload.get("aud")
         }
 
-    except Exception:
+    except jwt.InvalidTokenError:
         return JSONResponse(
         status_code=401,
-        content={
-            "valid": False
-        }
+        content={"valid": False}
     )
+
+    from fastapi import Request
+
+@app.get("/effective-config")
+async def effective_config(request: Request):
+
+    config = DEFAULTS.copy()
+
+    # -----------------------
+    # YAML
+    # -----------------------
+
+    if os.path.exists("config.development.yaml"):
+        with open("config.development.yaml") as f:
+            yaml_config = yaml.safe_load(f) or {}
+
+        for k, v in yaml_config.items():
+            config[k] = convert(k, v)
+
+    # -----------------------
+    # .env
+    # -----------------------
+
+    env_mapping = {
+        "APP_PORT": "port",
+        "APP_WORKERS": "workers",
+        "NUM_WORKERS": "workers",
+        "APP_DEBUG": "debug",
+        "APP_LOG_LEVEL": "log_level",
+        "APP_API_KEY": "api_key",
+    }
+
+    for env_key, cfg_key in env_mapping.items():
+
+        value = os.getenv(env_key)
+
+        if value is not None:
+            config[cfg_key] = convert(cfg_key, value)
+
+    # -----------------------
+    # CLI Overrides
+    # -----------------------
+
+    overrides = request.query_params.getlist("set")
+
+    for item in overrides:
+
+        if "=" not in item:
+            continue
+
+        key, value = item.split("=", 1)
+
+        config[key] = convert(key, value)
+
+    # Mask secret
+    config["api_key"] = "****"
+
+    return config
